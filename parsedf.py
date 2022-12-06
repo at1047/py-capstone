@@ -8,68 +8,48 @@ import plotly.graph_objects as go
 def rgb_to_hex(rgb):
     return '%02x%02x%02x' % rgb
 
-def parse(df, num_x, num_y):
-    df = df.rename(columns={'% x': 'x', 'T (K)': 't'})
-
-    for i in range(10):
-        z_min = i
-        z_max = i+1
-        df_xy = df.copy()
-        df_xy = df.loc[(df['z'] > z_min) & (df['z'] < z_max)]
-        df_xy = df_xy[['x', 'y', 't']]
-
-    df_xy = df.copy()
-    df_xy = df_xy.loc[df['z'] == 0]
-    df_xy = df_xy.loc[(df['x'] < 150) & (df['x'] >= 0)]
-    df_xy = df_xy.loc[(df['y'] < 150) & (df['y'] >= 0)]
-    df_xy = df_xy[['x', 'y', 't']]
-    # num_x = 5
-    # num_y = 10
-    x_interval = np.floor((df_xy['x'].max() - df_xy['x'].min())/(num_x-1))
-    y_interval = np.floor((df_xy['y'].max() - df_xy['y'].min())/(num_y-1))
-    df_xy['x_round'] = df_xy[['x']]//x_interval
-    df_xy['y_round'] = df_xy[['y']]//y_interval
-    df_xy = df_xy.groupby(['x_round', 'y_round']).max().reset_index()
-    df_xy = df_xy[['x_round', 'y_round', 't']]
-    df_xy = df_xy.rename(columns={'x_round': 'x', 'y_round': 'y'})
-    t_min = df_xy['t'].min()
-    t_max = df_xy['t'].max()
+def parse(filename, num_x, z, layers):
+    # filename = 'waterbaseline'
+    df_raw = pd.read_pickle(f'static/files/{filename}.pkl')
+    df_xy = df_raw.copy() # change Z depending on model
+    t_min = df_raw['t'].min()
+    t_max = df_raw['t'].max()
     t_range = t_max - t_min
+    # print(f't_min = {t_min}, t_max = {t_max}, z = {z}')
+    print(filename)
     df_xy['t_normalized'] = (df_xy['t']-t_min)/t_range
-    # df_xy['r'] = (1-df_xy['t_normalized'])*255
-    # df_xy['g'] = abs(0.5-df_xy['t_normalized'])*255*2
-    # df_xy['b'] = df_xy['t_normalized']*255
-    df_xy['rgb'] = df_xy.apply(lambda x: colorsys.hsv_to_rgb((x['t_normalized']/360*240), 1, 1), axis=1)
-    c = pd.DataFrame(df_xy['rgb'].tolist())
+    # print(df_xy['t_normalized'])
+    df_xy['rgb'] = df_xy.apply(lambda x: colorsys.hsv_to_rgb(((1-x['t_normalized'])/360*240), 1, 1), axis=1)
     df_xy['rgb_int'] = df_xy['rgb'].apply(lambda x: (int(np.floor(x[0]*255)), int(np.floor(x[1]*255)), int(np.floor(x[2]*255))))
-    df_xy['hex'] = df_xy['rgb_int'].apply(lambda x: f'#{rgb_to_hex(x)}')
-    fig = px.scatter(x=df_xy['x'], y=df_xy['y'], color=df_xy['hex'], color_discrete_map="identity")
+    df_xy['rgb_str'] = df_xy.apply(lambda x: f'rgb{x["rgb_int"]}', axis=1)
+    df_xy['rgb_tuple'] = df_xy.apply(lambda x: (x['t_normalized'], f'rgb{x["rgb_int"]}'), axis=1)
+    # df_xy['hex'] = df_xy['rgb_int'].apply(lambda x: f'#{rgb_to_hex(x)}')
+    df_final = pd.DataFrame(columns = ['x', 'y', 't'])
+    for i in range(num_x):
+        df_tmp = df_xy.loc[df_raw['z'] == z].copy()
+        df_tmp['x'] = i
+        df_final = df_final.append(df_tmp)
+    
+    fig = px.scatter(df_final, x='x', y='y', color='t', color_continuous_scale=df_xy.loc[df_raw['z'] == z]['rgb_str'].tolist())
     fig.update_layout({'paper_bgcolor': 'rgba(0,0,0,0)', 'plot_bgcolor': 'rgba(0,0,0,0)'})
     fig.update_layout(title_text='Heat Map', title_x=0.5, title_y=0.925)
-    # strout = {['' for i in range(num_x)]}
-    strout = {}
-    for i in range(num_x):
-        # print(i)
-        df_rgb = c[((i+1)*num_y-num_y):((i+1)*num_y)]
-        df_rgb = df_rgb*255
-        # df_rgb = df_rgb.apply(np.floor)
-        df_rgb = df_rgb.astype('int')
-        if (i % 2) == 1:
-            df_rgb = df_rgb.loc[::-1].reset_index()
-        # print(df_rgb)
-        str = ''
-        print(df_rgb)
-        for index, row in df_rgb.iterrows():
-            r = row[0]
-            g = row[1]
-            b = row[2]
-            print(f'{index} {b}')
-            str = str+f',{r},{g},{b}'
-        str = str[1:]
-        print(str)
-        strout[i] = str
+    
+    strout = []
+    for i, layer in layers.items():
+        if layer == -1:
+            str = f'-1:{i}'
+        else:
+            str = f'{i}:'
+            for index, row in df_xy.loc[df_xy['z'] == layer]['rgb_int'].iteritems():
+                r = row[0]
+                g = row[1]
+                b = row[2]
+                str = str+f'{r},{g},{b},'
+            str = str[0:-1]
+        strout.append(str)
+    # print(strout)
 
-    return fig, strout
+    return fig, f'[{t_max:.2f}, {t_min:.2f}]', strout
 
 def blank_fig():
     fig = go.Figure(go.Scatter(x=[], y = [], name="Heat Map"))
